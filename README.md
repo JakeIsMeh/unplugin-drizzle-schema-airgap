@@ -34,7 +34,7 @@ At build-time, this plugin:
 
 ```bash
 # Using pnpm
-pnpm i -D github:JakeIsMeh/unplugin-drizzle-schema-airgap
+pnpm i -D unplugin-drizzle-schema-airgap
 ```
 
 ---
