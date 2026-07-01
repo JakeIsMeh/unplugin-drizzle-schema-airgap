@@ -463,3 +463,40 @@ describe('Plugin Runtime - Reflected Schema Inspection', () => {
 		expect(usersReflected).not.toContain(dynamicUnreferencedTableName);
 	});
 });
+
+describe('Plugin Options - stripColumns', () => {
+	it('should completely strip columns matching the stripColumns option from the generated schema metadata', async () => {
+		const pluginInstance = unplugin.raw(
+			{
+				searchDirectories: [path.resolve(__dirname, '../fixtures/schemas')],
+				clientOnly: false,
+				stripColumns: ['isActive', 'metadata'],
+			},
+			{ framework: 'vite' } as any,
+		) as any;
+
+		await pluginInstance.buildStart({} as any);
+
+		const schemaPath = path.resolve(__dirname, '../fixtures/schemas/users');
+		const normalised = schemaPath.replace(/\\/g, '/');
+		const virtualId = pluginInstance.resolveId(
+			normalised,
+			path.resolve(__dirname, '../fixtures/consumer.ts'),
+			{} as any,
+		);
+		expect(virtualId).toBeDefined();
+
+		const code = pluginInstance.load(virtualId as string);
+		expect(code).toBeDefined();
+		expect(code).toContain('export const usersTable =');
+
+		// Columns specified in stripColumns should not be present in the generated code
+		expect(code).not.toContain('isActive');
+		expect(code).not.toContain('metadata');
+
+		// Columns not specified in stripColumns should still be present
+		expect(code).toContain('id');
+		expect(code).toContain('name');
+		expect(code).toContain('role');
+	});
+});

@@ -39,6 +39,10 @@ export interface DrizzleSchemaAirgapOptions {
 	 * If true (default), only intercepts client-side environments (Vite client target).
 	 */
 	clientOnly?: boolean;
+	/**
+	 * List of column names to completely strip from the client-side schema metadata (e.g. ['passwordHash', 'stripeId']).
+	 */
+	stripColumns?: string[];
 }
 
 const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
@@ -205,7 +209,13 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 							const columns = (val as Record<symbol, Record<string, DrizzleColumn>>)[
 								Symbol.for('drizzle:Columns')
 							];
-							const code = generatePlainObject(exportName, columns, 'table');
+							const filteredColumns: Record<string, DrizzleColumn> = {};
+							for (const [colKey, col] of Object.entries(columns || {})) {
+								if (!options.stripColumns?.includes(colKey)) {
+									filteredColumns[colKey] = col;
+								}
+							}
+							const code = generatePlainObject(exportName, filteredColumns, 'table');
 							schemas.push({ name: exportName, code });
 							processedNames.add(exportName);
 							continue;
@@ -216,7 +226,13 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 							const columns = (
 								val as Record<symbol, { selectedFields: Record<string, DrizzleColumn> }>
 							)[Symbol.for('drizzle:ViewBaseConfig')]?.selectedFields;
-							const code = generatePlainObject(exportName, columns, 'view');
+							const filteredColumns: Record<string, DrizzleColumn> = {};
+							for (const [colKey, col] of Object.entries(columns || {})) {
+								if (!options.stripColumns?.includes(colKey)) {
+									filteredColumns[colKey] = col;
+								}
+							}
+							const code = generatePlainObject(exportName, filteredColumns, 'view');
 							schemas.push({ name: exportName, code });
 							processedNames.add(exportName);
 							continue;
