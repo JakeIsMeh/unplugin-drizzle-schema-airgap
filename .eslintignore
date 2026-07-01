@@ -1,0 +1,5 @@
+node_modules
+dist
+test-artifacts
+tests/fixtures/.generated
+tests/fixtures/.generated-rspack

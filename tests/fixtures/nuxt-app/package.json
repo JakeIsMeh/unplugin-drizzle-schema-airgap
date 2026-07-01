@@ -1,0 +1,7 @@
+{
+	"name": "nuxt-fixture",
+	"private": true,
+	"scripts": {
+		"build": "nuxt build"
+	}
+}
