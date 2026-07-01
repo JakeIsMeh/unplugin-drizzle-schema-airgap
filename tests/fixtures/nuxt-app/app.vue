@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { createSelectSchema } from 'drizzle-zod';
+import { createSelectSchema } from 'drizzle-orm/zod';
 
 import { usersTable } from '../schemas/users';
 

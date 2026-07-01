@@ -548,9 +548,9 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 			if (source.startsWith('drizzle-orm/')) {
 				const sub = source.substring('drizzle-orm/'.length);
-				if (['zod', 'valibot', 'typebox', 'effect', 'arktype'].includes(sub)) {
+				if (['zod', 'valibot', 'typebox', 'effect', 'effect-schema', 'arktype'].includes(sub)) {
 					isValidator = true;
-					lib = sub;
+					lib = sub === 'effect-schema' ? 'effect' : sub;
 				} else {
 					const coreSubpaths = ['pg-core', 'mysql-core', 'sqlite-core', 'singlestore-core'];
 					if (!coreSubpaths.some((core) => sub.startsWith(core))) {

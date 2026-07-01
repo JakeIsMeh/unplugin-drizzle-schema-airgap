@@ -5,10 +5,10 @@ import * as path from 'node:path';
 import { Value } from '@sinclair/typebox/value';
 import { type } from 'arktype';
 // @ts-ignore
-import { createSelectSchema as createSelectArkTypeSchema } from 'drizzle-arktype';
-import { createSelectSchema as createSelectTypeBoxSchema } from 'drizzle-typebox';
-import { createSelectSchema as createSelectValibotSchema } from 'drizzle-valibot';
-import { createSelectSchema, createInsertSchema, createUpdateSchema } from 'drizzle-zod';
+import { createSelectSchema as createSelectArkTypeSchema } from 'drizzle-orm/arktype';
+import { createSelectSchema as createSelectTypeBoxSchema } from 'drizzle-orm/typebox';
+import { createSelectSchema as createSelectValibotSchema } from 'drizzle-orm/valibot';
+import { createSelectSchema, createInsertSchema, createUpdateSchema } from 'drizzle-orm/zod';
 import { Elysia, t } from 'elysia';
 import * as v from 'valibot';
 import { describe, it, expect } from 'vitest';
@@ -24,7 +24,8 @@ describe('Plugin Runtime - Metadata Schema Interception', () => {
 		expect(usersTable).toBeTypeOf('object');
 		expect((usersTable as any).__meta).toBeDefined();
 		expect((usersTable as any).__meta.kind).toBe('table');
-		expect((usersTable as any).id).toEqual({ dataType: 'number', notNull: true });
+		expect((usersTable as any).id.dataType).toContain('number');
+		expect((usersTable as any).id.notNull).toBe(true);
 
 		// Check properties for casing support without exposing database-specific internals
 		expect((usersTable as any).isActive).toEqual({
@@ -310,6 +311,7 @@ describe('Plugin Hooks - Guards & Warnings', () => {
 			{ input: 'drizzle-orm/valibot', expected: 'drizzle-airgap-shim:valibot' },
 			{ input: 'drizzle-orm/typebox', expected: 'drizzle-airgap-shim:typebox' },
 			{ input: 'drizzle-orm/effect', expected: 'drizzle-airgap-shim:effect' },
+			{ input: 'drizzle-orm/effect-schema', expected: 'drizzle-airgap-shim:effect' },
 			{ input: 'drizzle-orm/arktype', expected: 'drizzle-airgap-shim:arktype' },
 			{ input: 'drizzle-zod', expected: 'drizzle-airgap-shim:zod' },
 			{ input: 'drizzle-valibot', expected: 'drizzle-airgap-shim:valibot' },
@@ -386,10 +388,13 @@ describe('Plugin Runtime - ArkType Shims', () => {
 		expect(resultInvalid instanceof type.errors).toBe(true);
 	});
 	it('should support overrides in ArkType schema', () => {
-		const arkTypeSchema = createSelectArkTypeSchema(usersTable, {
-			id: type('number'),
-			avatar: type('string'),
-		});
+		const arkTypeSchema = createSelectArkTypeSchema(
+			usersTable as any,
+			{
+				id: type('number'),
+				avatar: type('string'),
+			} as any,
+		);
 
 		const validData = {
 			id: 42,

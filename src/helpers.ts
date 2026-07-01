@@ -44,10 +44,9 @@ export function generatePlainObject(
 		}
 
 		// Flag JSON columns for structural validation
-		const jsonDataTypes = ['json', 'jsonb'];
 		const isBlobJson =
 			column.dataType === 'blob' && column.columnType?.toLowerCase().includes('json');
-		if (jsonDataTypes.includes(column.dataType) || isBlobJson) {
+		if (column.dataType.includes('json') || isBlobJson) {
 			meta.isJson = true;
 		}
 
@@ -159,17 +158,17 @@ function buildZodSchema(table, mode) {
     let validator;
     if (col.enumValues && col.enumValues.length > 0) {
       validator = z.enum(col.enumValues);
-    } else if (col.dataType === 'number') {
+    } else if (col.dataType.startsWith('number')) {
       validator = z.number();
-    } else if (col.dataType === 'bigint') {
+    } else if (col.dataType.startsWith('bigint')) {
       validator = z.bigint();
-    } else if (col.dataType === 'string') {
+    } else if (col.dataType.startsWith('string')) {
       const isUUID = col.isUuid;
       validator = isUUID ? z.string().uuid() : z.string();
       if (col.length) validator = validator.max(col.length);
-    } else if (col.dataType === 'boolean') {
+    } else if (col.dataType.startsWith('boolean')) {
       validator = z.boolean();
-    } else if (col.dataType === 'date') {
+    } else if (col.dataType.startsWith('date')) {
       validator = z.date();
     } else if (col.isJson) {
       validator = z.record(z.string(), z.unknown());
@@ -217,17 +216,17 @@ function buildValibotSchema(table, mode) {
     let validator;
     if (col.enumValues && col.enumValues.length > 0) {
       validator = v.picklist(col.enumValues);
-    } else if (col.dataType === 'number') {
+    } else if (col.dataType.startsWith('number')) {
       validator = v.number();
-    } else if (col.dataType === 'bigint') {
+    } else if (col.dataType.startsWith('bigint')) {
       validator = v.bigint();
-    } else if (col.dataType === 'string') {
+    } else if (col.dataType.startsWith('string')) {
       const isUUID = col.isUuid;
       validator = isUUID ? v.pipe(v.string(), v.uuid()) : v.string();
       if (col.length) validator = v.pipe(validator, v.maxLength(col.length));
-    } else if (col.dataType === 'boolean') {
+    } else if (col.dataType.startsWith('boolean')) {
       validator = v.boolean();
-    } else if (col.dataType === 'date') {
+    } else if (col.dataType.startsWith('date')) {
       validator = v.date();
     } else if (col.isJson) {
       validator = v.record(v.string(), v.unknown());
@@ -275,17 +274,17 @@ function buildTypeBoxSchema(table, mode) {
     let validator;
     if (col.enumValues && col.enumValues.length > 0) {
       validator = Type.Union(col.enumValues.map(val => Type.Literal(val)));
-    } else if (col.dataType === 'number') {
+    } else if (col.dataType.startsWith('number')) {
       validator = Type.Number();
-    } else if (col.dataType === 'bigint') {
+    } else if (col.dataType.startsWith('bigint')) {
       validator = Type.BigInt();
-    } else if (col.dataType === 'string') {
+    } else if (col.dataType.startsWith('string')) {
       const isUUID = col.isUuid;
       validator = isUUID ? Type.String({ format: 'uuid' }) : Type.String();
       if (col.length) validator = Type.String({ maxLength: col.length });
-    } else if (col.dataType === 'boolean') {
+    } else if (col.dataType.startsWith('boolean')) {
       validator = Type.Boolean();
-    } else if (col.dataType === 'date') {
+    } else if (col.dataType.startsWith('date')) {
       validator = Type.Date();
     } else if (col.isJson) {
       validator = Type.Record(Type.String(), Type.Unknown());
@@ -333,17 +332,17 @@ function buildEffectSchema(table, mode) {
     let validator;
     if (col.enumValues && col.enumValues.length > 0) {
       validator = S.Union(...col.enumValues.map(val => S.Literal(val)));
-    } else if (col.dataType === 'number') {
+    } else if (col.dataType.startsWith('number')) {
       validator = S.Number;
-    } else if (col.dataType === 'bigint') {
+    } else if (col.dataType.startsWith('bigint')) {
       validator = S.BigIntFromSelf;
-    } else if (col.dataType === 'string') {
+    } else if (col.dataType.startsWith('string')) {
       const isUUID = col.isUuid;
       validator = isUUID ? S.UUID : S.String;
       if (col.length) validator = S.String.pipe(S.maxLength(col.length));
-    } else if (col.dataType === 'boolean') {
+    } else if (col.dataType.startsWith('boolean')) {
       validator = S.Boolean;
-    } else if (col.dataType === 'date') {
+    } else if (col.dataType.startsWith('date')) {
       validator = S.Date;
     } else if (col.isJson) {
       validator = S.Record({ key: S.String, value: S.Unknown });
@@ -388,18 +387,18 @@ function buildArkTypeShape(table, mode) {
   const shape = {};
   for (const [key, col] of Object.entries(table)) {
     if (key === '__meta') continue;
-    let typeStr = 'any';
+    let typeStr = 'unknown';
     if (col.enumValues && col.enumValues.length > 0) {
       typeStr = col.enumValues.map(val => "'" + val + "'").join('|');
-    } else if (col.dataType === 'number') {
+    } else if (col.dataType.startsWith('number')) {
       typeStr = 'number';
-    } else if (col.dataType === 'bigint') {
+    } else if (col.dataType.startsWith('bigint')) {
       typeStr = 'bigint';
-    } else if (col.dataType === 'string') {
+    } else if (col.dataType.startsWith('string')) {
       typeStr = 'string';
-    } else if (col.dataType === 'boolean') {
+    } else if (col.dataType.startsWith('boolean')) {
       typeStr = 'boolean';
-    } else if (col.dataType === 'date') {
+    } else if (col.dataType.startsWith('date')) {
       typeStr = 'Date';
     } else if (col.isJson) {
       typeStr = 'object';

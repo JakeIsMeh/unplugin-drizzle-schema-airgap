@@ -2,7 +2,7 @@
 
 > Airgap your Drizzle-derived validators from your client-side bundle.
 
-`unplugin-drizzle-schema-airgap` compile-time virtualizes your Drizzle schema files, allowing you to share validation adaptors (`drizzle-zod`, `drizzle-valibot`, etc.) across the client-server boundary without bloating your client bundles or leaking server-only dependencies.
+`unplugin-drizzle-schema-airgap` compile-time virtualizes your Drizzle schema files, allowing you to share validation adaptors (`drizzle-orm/zod`, `drizzle-orm/valibot`, etc.) across the client-server boundary without bloating your client bundles or leaking server-only dependencies.
 
 ## 🤖 LLM Disclosure
 
@@ -13,7 +13,7 @@ _I steered the AI and did the reviews._
 
 ## Why?
 
-When you derive client-side schemas (e.g. for form validation) from your Drizzle schemas using adaptors like `drizzle-zod`, your frontend build tool ends up importing `drizzle-orm` and all of its transitive dependencies.
+When you derive client-side schemas (e.g. for form validation) from your Drizzle schemas using adaptors like `drizzle-orm/zod` (or legacy `drizzle-zod`), your frontend build tool ends up importing `drizzle-orm` and all of its transitive dependencies.
 
 This causes two major issues:
 
@@ -24,7 +24,7 @@ This causes two major issues:
 
 At build-time, this plugin:
 
-- Intercepts and shims validation adaptors (like `drizzle-zod`, `drizzle-valibot`, `drizzle-typebox`, `drizzle-effect`, and `drizzle-arktype`) with client-safe, Drizzle-free validation code.
+- Intercepts and shims validation adaptors (like `drizzle-orm/zod`, `drizzle-orm/valibot`, `drizzle-orm/typebox`, `drizzle-orm/effect-schema`, and `drizzle-orm/arktype` — as well as legacy `drizzle-zod` / `drizzle-valibot` packages) with client-safe, Drizzle-free validation code.
 - Compiles your schemas into lightweight, plain-object metadata in-memory (or to a physical cache file).
 - Automatically sweeps your code to ensure unused schemas are never included in the frontend bundle.
 
