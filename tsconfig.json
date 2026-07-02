@@ -15,9 +15,6 @@
 		"node_modules",
 		"dist",
 		"test-artifacts",
-		"tests/fixtures/.generated",
-		"tests/fixtures/.generated-rspack",
-		"tests/fixtures/nuxt-app",
-		"tests/fixtures/nitro-app"
+		"tests/fixtures/**/*"
 	]
 }

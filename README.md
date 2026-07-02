@@ -1,112 +1,135 @@
 # unplugin-drizzle-schema-airgap
 
-> Airgap your Drizzle-derived validators from your client-side bundle.
+Airgap your Drizzle-derived validators from client-side bundles.
 
-`unplugin-drizzle-schema-airgap` compile-time virtualizes your Drizzle schema files, allowing you to share validation adaptors (`drizzle-orm/zod`, `drizzle-orm/valibot`, etc.) across the client-server boundary without bloating your client bundles or leaking server-only dependencies.
+### Features
 
-## 🤖 LLM Disclosure
-
-_85% Gemini-3.5-Flash and a smidge of Claude-Opus-4.6_  
-_I steered the AI and did the reviews._
-
----
-
-## Why?
-
-When you derive client-side schemas (e.g. for form validation) from your Drizzle schemas using adaptors like `drizzle-orm/zod` (or legacy `drizzle-zod`), your frontend build tool ends up importing `drizzle-orm` and all of its transitive dependencies.
-
-This causes two major issues:
-
-1. **Bundle Bloat:** Client bundles carry unnecessary database-specific query builders and drivers.
-2. **Server Leakage / Build Crashes:** Schema files often import server utilities or Node.js-only modules (`pg`, `fs`, `net`, database client instances). Importing these in client-side code will crash your build pipeline.
-
-### The Solution
-
-At build-time, this plugin:
-
-- Intercepts and shims validation adaptors (like `drizzle-orm/zod`, `drizzle-orm/valibot`, `drizzle-orm/typebox`, `drizzle-orm/effect-schema`, and `drizzle-orm/arktype` — as well as legacy `drizzle-zod` / `drizzle-valibot` packages) with client-safe, Drizzle-free validation code.
-- Compiles your schemas into lightweight, plain-object metadata in-memory (or to a physical cache file).
-- Automatically sweeps your code to ensure unused schemas are never included in the frontend bundle.
+- **Universal**: Support major build tools (Vite, Webpack, Rollup, Rspack, etc.) via unplugin.
+- **On-demand**: Compile validation schemas into lightweight, plain-object metadata in-memory.
+- **Type-safe**: Full TypeScript support with virtual path mappings and autocomplete.
+- **Secure**: Prevent server-only database drivers or credentials from leaking to frontend bundles.
 
 ---
 
 ## Installation
 
 ```bash
-# Using pnpm
-pnpm i -D unplugin-drizzle-schema-airgap
+npm i -D unplugin-drizzle-schema-airgap
 ```
 
 ---
 
-## Configuration & Options
+## Usage
 
-Add the plugin to your bundler configuration. Below are the available customization options:
+Import client-side schemas using the `/airgap` suffix. This completely decouples Drizzle ORM from client builds.
 
 ```ts
-export interface DrizzleSchemaAirgapOptions {
-	/**
-	 * Absolute or relative paths to directories containing your Drizzle schema files.
-	 * e.g. ['./src/db/schemas']
-	 */
-	searchDirectories: string[];
+import { selectUserSchema } from './db/schema/users/airgap'
 
-	/**
-	 * The file path where the generated client-side validation metadata will be saved.
-	 * If omitted, the plugin compiles modules completely in-memory (virtual mode).
-	 * Defaults to 'node_modules/.cache/drizzle-schema-airgap/validation.ts'.
-	 */
-	outputFilePath?: string;
+// Autocomplete and validation work normally, minus Drizzle bundle bloat!
+```
 
-	/**
-	 * If true (default), the plugin only intercepts and transforms client-side targeted environments
-	 * (e.g., Vite's client target). Keep this as true to allow server-side code to use the real Drizzle ORM.
-	 */
-	clientOnly?: boolean;
+To enable IDE autocompletion and compile-time type-safety, extend your `tsconfig.json` with the generated configuration:
 
-	/**
-	 * List of sensitive column names to completely strip from client-side schema metadata.
-	 * Use this to prevent sensitive fields (like 'passwordHash', 'stripeId') from leaking to frontend bundles.
-	 * e.g. ['passwordHash', 'salt']
-	 */
-	stripColumns?: string[];
+```json
+{
+  "extends": "./.drizzle-airgap/tsconfig.json"
 }
 ```
 
-### Example Usage (Vite)
+### Adaptor Shimming
+
+The plugin automatically intercepts and shims imports referencing validation adaptors at build time. This allows you to write standard derivation code in shared modules:
 
 ```ts
-// vite.config.ts
-import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/vite';
+import { createSelectSchema } from 'drizzle-orm/zod'
+import { users } from './schema/users/airgap'
 
-export default defineConfig({
-	plugins: [
-		drizzleSchemaAirgap({
-			searchDirectories: ['./src/db/schemas'],
-			stripColumns: ['passwordHash', 'stripeId'], // Prevent sensitive columns from leaking to the browser
-		}),
-	],
-});
+export const selectUserSchema = createSelectSchema(users)
 ```
+
+The following adaptors are fully shimmed with client-safe, Drizzle-free implementations:
+
+- `drizzle-orm/zod` (and legacy `drizzle-zod`)
+- `drizzle-orm/valibot` (and legacy `drizzle-valibot`)
+- `drizzle-orm/typebox`
+- `drizzle-orm/effect-schema`
+- `drizzle-orm/arktype`
 
 ---
 
-## Bundler Setup Examples
+## Column Stripping & Visibility
+
+### Global Stripping
+
+Configure columns to strip globally across all schemas using the `omitColumns` option:
+
+```ts
+drizzleSchemaAirgap({
+  searchDirectories: ['./src/db/schemas'],
+  omitColumns: ['passwordHash', 'salt'],
+})
+```
+
+### Magic Comment Directives
+
+Define table-specific and view-specific rules directly in your schema files:
+
+### `omit`
+
+Remove specific columns from client metadata (local counterpart to `omitColumns` option):
+
+```ts
+/* @drizzle-airgap omit passwordHash, salt */
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  passwordHash: text('password_hash'),
+})
+```
+
+### `pick`
+
+Keep only the listed columns (secure-by-default):
+
+```ts
+/* @drizzle-airgap pick id, name */
+export const profiles = pgTable('profiles', {
+  id: serial('id').primaryKey(),
+  name: text('name'),
+  secretToken: text('secret_token'), // stripped
+})
+```
+
+These directives work with inline, multiline, or JSDoc comments.
+
+---
+
+## Import Guardrails
+
+If a client-side module imports directly from a raw schema (e.g. `from './db/schema'`), the plugin emits a build warning prompting you to use the `/airgap` suffix instead.
+
+---
+
+## Configuration
+
+This section covers how to configure `unplugin-drizzle-schema-airgap` for different build tools.
+
+### Build Tools
 
 <details>
 <summary>Vite</summary><br>
 
 ```ts
 // vite.config.ts
-import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/vite';
+import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/vite'
 
 export default defineConfig({
-	plugins: [
-		drizzleSchemaAirgap({
-			searchDirectories: ['./src/db/schemas'],
-		}),
-	],
-});
+  plugins: [
+    drizzleSchemaAirgap({
+      searchDirectories: ['./src/db/schemas'],
+    }),
+  ],
+})
 ```
 
 <br></details>
@@ -116,33 +139,33 @@ export default defineConfig({
 
 ```ts
 // rollup.config.js
-import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/rollup';
+import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/rollup'
 
 export default {
-	plugins: [
-		drizzleSchemaAirgap({
-			searchDirectories: ['./src/db/schemas'],
-		}),
-	],
-};
+  plugins: [
+    drizzleSchemaAirgap({
+      searchDirectories: ['./src/db/schemas'],
+    }),
+  ],
+}
 ```
 
 <br></details>
 
 <details>
-<summary>Rolldown / tsdown</summary><br>
+<summary>Rolldown</summary><br>
 
 ```ts
-// rolldown.config.ts / tsdown.config.ts
-import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/rolldown';
+// rolldown.config.ts
+import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/rolldown'
 
 export default {
-	plugins: [
-		drizzleSchemaAirgap({
-			searchDirectories: ['./src/db/schemas'],
-		}),
-	],
-};
+  plugins: [
+    drizzleSchemaAirgap({
+      searchDirectories: ['./src/db/schemas'],
+    }),
+  ],
+}
 ```
 
 <br></details>
@@ -151,16 +174,16 @@ export default {
 <summary>esbuild</summary><br>
 
 ```ts
-import { build } from 'esbuild';
-import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/esbuild';
+import { build } from 'esbuild'
+import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/esbuild'
 
 build({
-	plugins: [
-		drizzleSchemaAirgap({
-			searchDirectories: ['./src/db/schemas'],
-		}),
-	],
-});
+  plugins: [
+    drizzleSchemaAirgap({
+      searchDirectories: ['./src/db/schemas'],
+    }),
+  ],
+})
 ```
 
 <br></details>
@@ -168,17 +191,17 @@ build({
 <details>
 <summary>Webpack</summary><br>
 
-```js
+```ts
 // webpack.config.js
-import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/webpack';
+import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/webpack'
 
 export default {
-	plugins: [
-		drizzleSchemaAirgap({
-			searchDirectories: ['./src/db/schemas'],
-		}),
-	],
-};
+  plugins: [
+    drizzleSchemaAirgap({
+      searchDirectories: ['./src/db/schemas'],
+    }),
+  ],
+}
 ```
 
 <br></details>
@@ -188,18 +211,46 @@ export default {
 
 ```ts
 // rspack.config.js
-import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/rspack';
+import drizzleSchemaAirgap from 'unplugin-drizzle-schema-airgap/rspack'
 
 export default {
-	plugins: [
-		drizzleSchemaAirgap({
-			searchDirectories: ['./src/db/schemas'],
-		}),
-	],
-};
+  plugins: [
+    drizzleSchemaAirgap({
+      searchDirectories: ['./src/db/schemas'],
+    }),
+  ],
+}
 ```
 
 <br></details>
+
+### Options
+
+```ts
+export interface DrizzleSchemaAirgapOptions {
+  /**
+   * Absolute or relative paths to directories containing your Drizzle schema files.
+   */
+  searchDirectories: string[]
+
+  /**
+   * The file path where the generated client-side validation metadata will be saved.
+   * If omitted, the plugin compiles modules completely in-memory (virtual mode).
+   * Defaults to 'node_modules/.cache/drizzle-schema-airgap/validation.ts'.
+   */
+  outputFilePath?: string
+
+  /**
+   * If true (default), only intercept and transform client-side targeted environments.
+   */
+  clientOnly?: boolean
+
+  /**
+   * List of sensitive column names to completely strip from client-side schema metadata.
+   */
+  omitColumns?: string[]
+}
+```
 
 ---
 

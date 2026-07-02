@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import * as path from 'node:path';
 
 import { createJiti } from 'jiti';
-import { parseSync } from 'oxc-parser';
+import { parse, parseSync } from 'oxc-parser';
 import * as globby from 'tinyglobby';
 import { createUnplugin } from 'unplugin';
 
@@ -42,7 +42,7 @@ export interface DrizzleSchemaAirgapOptions {
 	/**
 	 * List of column names to completely strip from the client-side schema metadata (e.g. ['passwordHash', 'stripeId']).
 	 */
-	stripColumns?: string[];
+	omitColumns?: string[];
 }
 
 const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
@@ -67,6 +67,13 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 	// Map of normalized schema paths -> original file paths for resolveId lookup
 	const schemaPathIndex = new Map<string, string>();
+
+	interface Directive {
+		type: 'pick' | 'omit';
+		columns: Set<string>;
+	}
+	const fileStaticExports = new Map<string, any[]>();
+	const fileLocalDirectives = new Map<string, Map<string, Directive>>();
 
 	// Path aliases propagated to Jiti
 	let aliases: Record<string, string> = {};
@@ -124,7 +131,7 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 			// Parse AST to find Drizzle imports
 			let parseResult: ReturnType<typeof parseSync>;
 			try {
-				parseResult = parseSync(filePath, content);
+				parseResult = await parse(filePath, content);
 			} catch (err) {
 				console.warn(`[drizzle-schema-airgap] Failed to parse schema file: ${filePath}`, err);
 				continue;
@@ -137,6 +144,8 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 			if (drizzleImports.length === 0) {
 				fileCache.delete(filePath);
+				fileStaticExports.delete(filePath);
+				fileLocalDirectives.delete(filePath);
 				continue;
 			}
 
@@ -175,6 +184,8 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 			if (localBuilders.size === 0) {
 				fileCache.delete(filePath);
+				fileStaticExports.delete(filePath);
+				fileLocalDirectives.delete(filePath);
 				continue;
 			}
 
@@ -183,6 +194,66 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 			if (isInvoked) {
 				activeFiles.add(filePath);
+				fileStaticExports.set(filePath, parseResult.module?.staticExports || []);
+
+				// Parse local directives
+				const directives = new Map<string, Directive>();
+				if (parseResult.comments) {
+					for (const comment of parseResult.comments) {
+						const val = comment.value;
+						if (val.includes('@drizzle-airgap')) {
+							const cleaned = val.replace('@drizzle-airgap', '').trim();
+							const parts = cleaned.split(/\s+/);
+							const action = parts[0];
+							if (action === 'omit' || action === 'pick') {
+								const cols = parts.slice(1)
+									.join('')
+									.split(',')
+									.map(c => c.trim())
+									.filter(Boolean);
+
+								const directive: Directive = {
+									type: action,
+									columns: new Set(cols)
+								};
+
+								let closestNode: any = null;
+								let minDiff = Infinity;
+
+								for (const node of parseResult.program.body) {
+									if (
+										(node.type === 'ExportNamedDeclaration' && node.declaration) ||
+										node.type === 'ExportDefaultDeclaration' ||
+										node.type === 'VariableDeclaration'
+									) {
+										const diff = node.start - comment.end;
+										if (diff >= 0 && diff < minDiff) {
+											minDiff = diff;
+											closestNode = node;
+										}
+									}
+								}
+
+								if (closestNode) {
+									let declNode = closestNode;
+									if (closestNode.type === 'ExportNamedDeclaration') {
+										declNode = closestNode.declaration;
+									}
+									if (declNode.type === 'VariableDeclaration') {
+										for (const decl of declNode.declarations || []) {
+											if (decl.id && decl.id.name) {
+												directives.set(decl.id.name, directive);
+											}
+										}
+									} else if (closestNode.type === 'ExportDefaultDeclaration') {
+										directives.set('default', directive);
+									}
+								}
+							}
+						}
+					}
+				}
+				fileLocalDirectives.set(filePath, directives);
 
 				const schemas: CachedSchema[] = [];
 				try {
@@ -209,9 +280,21 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 							const columns = (val as Record<symbol, Record<string, DrizzleColumn>>)[
 								Symbol.for('drizzle:Columns')
 							];
+							const localFilter = directives.get(exportName);
 							const filteredColumns: Record<string, DrizzleColumn> = {};
 							for (const [colKey, col] of Object.entries(columns || {})) {
-								if (!options.stripColumns?.includes(colKey)) {
+								let shouldInclude = true;
+								if (localFilter) {
+									if (localFilter.type === 'omit') {
+										shouldInclude = !localFilter.columns.has(colKey);
+									} else if (localFilter.type === 'pick') {
+										shouldInclude = localFilter.columns.has(colKey);
+									}
+								}
+								if (shouldInclude && options.omitColumns?.includes(colKey)) {
+									shouldInclude = false;
+								}
+								if (shouldInclude) {
 									filteredColumns[colKey] = col;
 								}
 							}
@@ -226,9 +309,21 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 							const columns = (
 								val as Record<symbol, { selectedFields: Record<string, DrizzleColumn> }>
 							)[Symbol.for('drizzle:ViewBaseConfig')]?.selectedFields;
+							const localFilter = directives.get(exportName);
 							const filteredColumns: Record<string, DrizzleColumn> = {};
 							for (const [colKey, col] of Object.entries(columns || {})) {
-								if (!options.stripColumns?.includes(colKey)) {
+								let shouldInclude = true;
+								if (localFilter) {
+									if (localFilter.type === 'omit') {
+										shouldInclude = !localFilter.columns.has(colKey);
+									} else if (localFilter.type === 'pick') {
+										shouldInclude = localFilter.columns.has(colKey);
+									}
+								}
+								if (shouldInclude && options.omitColumns?.includes(colKey)) {
+									shouldInclude = false;
+								}
+								if (shouldInclude) {
 									filteredColumns[colKey] = col;
 								}
 							}
@@ -273,9 +368,13 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 						err,
 					);
 					fileCache.delete(filePath);
+					fileStaticExports.delete(filePath);
+					fileLocalDirectives.delete(filePath);
 				}
 			} else {
 				fileCache.delete(filePath);
+				fileStaticExports.delete(filePath);
+				fileLocalDirectives.delete(filePath);
 			}
 		}
 
@@ -283,6 +382,8 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 		for (const cachedPath of fileCache.keys()) {
 			if (!activeFiles.has(cachedPath)) {
 				fileCache.delete(cachedPath);
+				fileStaticExports.delete(cachedPath);
+				fileLocalDirectives.delete(cachedPath);
 			}
 		}
 
@@ -336,7 +437,7 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 			let barrelParse: ReturnType<typeof parseSync>;
 			try {
-				barrelParse = parseSync(filePath, barrelContent);
+				barrelParse = await parse(filePath, barrelContent);
 			} catch {
 				continue;
 			}
@@ -346,18 +447,20 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 			const barrelExports = barrelParse.module?.staticExports || [];
 
 			for (const exp of barrelExports) {
-				const specifier = (exp as any).moduleRequest?.value as string | undefined;
-				if (!specifier || !specifier.startsWith('.')) continue;
+				for (const entry of exp.entries || []) {
+					const specifier = entry.moduleRequest?.value;
+					if (!specifier || !specifier.startsWith('.')) continue;
 
-				const targetNorm = resolveSpecifier(fileDir, specifier, allKnownFiles);
-				if (!targetNorm) continue;
+					const targetNorm = resolveSpecifier(fileDir, specifier, allKnownFiles);
+					if (!targetNorm) continue;
 
-				let sources = reverseEdges.get(targetNorm);
-				if (!sources) {
-					sources = new Set();
-					reverseEdges.set(targetNorm, sources);
+					let sources = reverseEdges.get(targetNorm);
+					if (!sources) {
+						sources = new Set();
+						reverseEdges.set(targetNorm, sources);
+					}
+					sources.add(sourceNorm);
 				}
-				sources.add(sourceNorm);
 			}
 		}
 
@@ -464,6 +567,125 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 			if (existingCode !== finalCode) {
 				fs.writeFileSync(absoluteOutputPath, finalCode, 'utf-8');
 			}
+		}
+
+		// ── Nuxt-Style tsconfig & .d.ts Generation ───────────────────────────
+		const drizzleAirgapDir = path.resolve(process.cwd(), '.drizzle-airgap');
+		if (!fs.existsSync(drizzleAirgapDir)) {
+			fs.mkdirSync(drizzleAirgapDir, { recursive: true });
+		}
+
+		const paths: Record<string, string[]> = {};
+
+		for (const filePath of activeFiles) {
+			const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, '/');
+			const relativePathNoExt = relativePath.replace(/\.[^/.]+$/, '');
+
+			const sandboxedPath = relativePathNoExt
+				.split('/')
+				.map((segment) => (segment === '..' ? '_parent_' : segment))
+				.join('/');
+
+			const dtsRelativePath = `.drizzle-airgap/${sandboxedPath}.d.ts`;
+			const dtsAbsoluteFile = path.resolve(process.cwd(), dtsRelativePath);
+			const dtsDir = path.dirname(dtsAbsoluteFile);
+			if (!fs.existsSync(dtsDir)) {
+				fs.mkdirSync(dtsDir, { recursive: true });
+			}
+
+			const originalFileAbs = path.resolve(filePath);
+			const relativeImportPath = path.relative(dtsDir, originalFileAbs)
+				.replace(/\\/g, '/')
+				.replace(/\.[^/.]+$/, '');
+
+			const staticExports = fileStaticExports.get(filePath) || [];
+			const fileDirectives = fileLocalDirectives.get(filePath) || new Map<string, Directive>();
+
+			const header = `import type * as original from '${relativeImportPath}';
+
+type OmitColumns<T, K extends string> = 
+  T extends { _output: any; _input: any; shape: infer S }
+    ? Omit<T, 'shape'> & { shape: Omit<S, K>; _output: Omit<T['_output'], K>; _input: Omit<T['_input'], K> }
+    : T extends { entries: infer E; type: 'object' }
+      ? Omit<T, 'entries'> & { entries: Omit<E, K> }
+      : T;
+
+type PickColumns<T, K extends string> = 
+  T extends { _output: any; _input: any; shape: infer S }
+    ? Omit<T, 'shape'> & { shape: Pick<S, K & keyof S>; _output: Pick<T['_output'], K & keyof T['_output']>; _input: Pick<T['_input'], K & keyof T['_input']> }
+    : T extends { entries: infer E; type: 'object' }
+      ? Omit<T, 'entries'> & { entries: Pick<E, K & keyof E> }
+      : T;
+`;
+
+			const dtsExports: string[] = [];
+
+			for (const exp of staticExports) {
+				for (const entry of exp.entries || []) {
+					const isDefault = entry.exportName?.kind === 'Default';
+					const name = isDefault ? 'default' : entry.exportName?.name;
+					if (!name) continue;
+
+					const localFilter = fileDirectives.get(name);
+					let mode: 'pick' | 'omit' = 'omit';
+					let cols: string[] = [];
+
+					if (localFilter) {
+						mode = localFilter.type;
+						cols = Array.from(localFilter.columns);
+					} else if (options.omitColumns && options.omitColumns.length > 0) {
+						mode = 'omit';
+						cols = options.omitColumns;
+					}
+
+					const colsUnion = cols.length > 0
+						? cols.map(c => `'${c}'`).join(' | ')
+						: 'never';
+
+					if (isDefault) {
+						if (entry.isType) {
+							dtsExports.push(`export type { default } from '${relativeImportPath}';`);
+						} else {
+							dtsExports.push(`declare const _default: ${mode === 'pick' ? 'PickColumns' : 'OmitColumns'}<typeof original.default, ${colsUnion}>;`);
+							dtsExports.push(`export default _default;`);
+						}
+					} else {
+						if (entry.isType) {
+							dtsExports.push(`export type ${name} = original.${name};`);
+						} else {
+							dtsExports.push(`export declare const ${name}: ${mode === 'pick' ? 'PickColumns' : 'OmitColumns'}<typeof original.${name}, ${colsUnion}>;`);
+						}
+					}
+				}
+			}
+
+			const dtsContent = header + '\n' + dtsExports.join('\n') + '\n';
+
+			let existingDts = '';
+			if (fs.existsSync(dtsAbsoluteFile)) {
+				existingDts = fs.readFileSync(dtsAbsoluteFile, 'utf-8');
+			}
+			if (existingDts !== dtsContent) {
+				fs.writeFileSync(dtsAbsoluteFile, dtsContent, 'utf-8');
+			}
+
+			paths[`*${relativePathNoExt}/airgap`] = [`./${sandboxedPath}.d.ts`].map(p => p.replace(/\\/g, '/'));
+			paths[`${relativePathNoExt}/airgap`] = [`./${sandboxedPath}.d.ts`].map(p => p.replace(/\\/g, '/'));
+		}
+
+		const tsconfigPath = path.resolve(drizzleAirgapDir, 'tsconfig.json');
+		const tsconfigContent = JSON.stringify({
+			compilerOptions: {
+				paths
+			}
+		}, null, 2) + '\n';
+
+		let existingTsconfig = '';
+		if (fs.existsSync(tsconfigPath)) {
+			existingTsconfig = fs.readFileSync(tsconfigPath, 'utf-8');
+		}
+		if (existingTsconfig !== tsconfigContent) {
+			fs.writeFileSync(tsconfigPath, tsconfigContent, 'utf-8');
 		}
 	}
 
@@ -607,7 +829,13 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 			// 2. Intercept active schema file imports
 			if (importer && schemaPathIndex.size > 0) {
-				const resolvedPath = path.resolve(path.dirname(importer), source).replace(/\\/g, '/');
+				const isAirgapSuffix = source.endsWith('/airgap');
+				const baseSource = isAirgapSuffix ? source.substring(0, source.length - '/airgap'.length) : source;
+
+				let resolvedPath = baseSource.replace(/\\/g, '/');
+				if (!path.isAbsolute(resolvedPath)) {
+					resolvedPath = path.resolve(path.dirname(importer), baseSource).replace(/\\/g, '/');
+				}
 				const resolvedPathNoExt = resolvedPath.replace(/\.[^/.]+$/, '');
 
 				let targetPathNoExt: string | null = null;
@@ -622,7 +850,9 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 
 				if (targetPathNoExt) {
 					const originalPath = schemaPathIndex.get(targetPathNoExt);
-					if (absoluteOutputPath) {
+					if (isAirgapSuffix) {
+						return `${VIRTUAL_PREFIX}drizzle-schema-airgap:file:${targetPathNoExt}`;
+					} else if (absoluteOutputPath) {
 						// Redirect to the physical output file
 						return absoluteOutputPath;
 					} else if (originalPath && activeFiles.has(originalPath)) {
@@ -663,6 +893,50 @@ const unplugin = createUnplugin<DrizzleSchemaAirgapOptions>((options, meta) => {
 					}
 				}
 				return '';
+			}
+
+			return null;
+		},
+
+		transform(code, id) {
+			if (!isClientTarget(this)) {
+				return null;
+			}
+
+			const hasPossibleSchemaImport = Array.from(schemaPathIndex.keys()).some((schemaKey) => {
+				const lastPart = schemaKey.split('/').pop();
+				return lastPart && code.includes(lastPart);
+			});
+
+			if (!hasPossibleSchemaImport) {
+				return null;
+			}
+
+			try {
+				const parseResult = parseSync(id, code);
+				const imports = parseResult.module?.staticImports || [];
+				for (const imp of imports) {
+					const specifier = imp.moduleRequest?.value;
+					if (specifier && !specifier.endsWith('/airgap')) {
+						const resolved = path.resolve(path.dirname(id), specifier).replace(/\\/g, '/');
+						const resolvedNoExt = resolved.replace(/\.[^/.]+$/, '');
+
+						if (schemaPathIndex.has(resolvedNoExt) || schemaPathIndex.has(resolvedNoExt + '/index')) {
+							const message =
+								`[drizzle-schema-airgap] Warning in "${id}":\n` +
+								`Importing directly from raw schema "${specifier}" in a client module will bundle the entire Drizzle ORM and all raw/sensitive columns.\n` +
+								`Please use the airgapped suffix instead:\n` +
+								`  "${specifier}/airgap"`;
+							if (typeof this.warn === 'function') {
+								this.warn(message);
+							} else {
+								console.warn(message);
+							}
+						}
+					}
+				}
+			} catch {
+				// Ignore parse errors for external/non-JS files
 			}
 
 			return null;

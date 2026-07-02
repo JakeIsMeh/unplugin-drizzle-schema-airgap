@@ -469,13 +469,13 @@ describe('Plugin Runtime - Reflected Schema Inspection', () => {
 	});
 });
 
-describe('Plugin Options - stripColumns', () => {
-	it('should completely strip columns matching the stripColumns option from the generated schema metadata', async () => {
+describe('Plugin Options - omitColumns', () => {
+	it('should completely strip columns matching the omitColumns option from the generated schema metadata', async () => {
 		const pluginInstance = unplugin.raw(
 			{
 				searchDirectories: [path.resolve(__dirname, '../fixtures/schemas')],
 				clientOnly: false,
-				stripColumns: ['isActive', 'metadata'],
+				omitColumns: ['isActive', 'metadata'],
 			},
 			{ framework: 'vite' } as any,
 		) as any;
@@ -495,11 +495,11 @@ describe('Plugin Options - stripColumns', () => {
 		expect(code).toBeDefined();
 		expect(code).toContain('export const usersTable =');
 
-		// Columns specified in stripColumns should not be present in the generated code
+		// Columns specified in omitColumns should not be present in the generated code
 		expect(code).not.toContain('isActive');
 		expect(code).not.toContain('metadata');
 
-		// Columns not specified in stripColumns should still be present
+		// Columns not specified in omitColumns should still be present
 		expect(code).toContain('id');
 		expect(code).toContain('name');
 		expect(code).toContain('role');
