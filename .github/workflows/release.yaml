@@ -39,6 +39,7 @@ jobs:
       - uses: danielroe/uppt/release@v0.5.5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          publish-workflow: release.yaml
   pack:
     if: github.event_name == 'workflow_dispatch' && startsWith(github.ref,
       'refs/tags/v')
