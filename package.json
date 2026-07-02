@@ -1,6 +1,6 @@
 {
 	"name": "unplugin-drizzle-schema-airgap",
-	"version": "0.1.0",
+	"version": "0.0.0",
 	"description": "Compile-time airgap Drizzle schemas for client validation libraries",
 	"keywords": [
 		"airgap",
